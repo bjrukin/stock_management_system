@@ -18,7 +18,7 @@ class PharmaWarehouseController extends Controller
         $data['sub_nav'] = 'movements';
         $data['page_title'] = 'Stock Ledger (Audit Trail)';
 
-        $query = StockMovement::with(['product', 'batch', 'warehouse', 'warehouseLocation']);
+        $query = StockMovement::with(['product', 'batch', 'warehouse', 'location']);
 
         if ($request->filled('flow_type')) {
             match ($request->flow_type) {

@@ -112,7 +112,7 @@ class PharmaPaymentController extends Controller
         $data['sub_nav'] = 'supplier_payments';
         $data['page_title'] = 'Supplier Payments (AP Disbursement)';
 
-        $data['payments'] = SupplierPayment::with(['supplier', 'cashBankAccount', 'allocations.goodsReceipt'])
+        $data['payments'] = SupplierPayment::with(['supplier', 'account', 'allocations.goodsReceipt'])
             ->orderBy('id', 'desc')->paginate(20);
 
         return view('admin.pharma.payments.supplier_payments', $data);
@@ -175,7 +175,7 @@ class PharmaPaymentController extends Controller
 
     public function showPayment(int $id)
     {
-        $payment = SupplierPayment::with(['supplier', 'cashBankAccount', 'allocations.goodsReceipt'])
+        $payment = SupplierPayment::with(['supplier', 'account', 'allocations.goodsReceipt'])
             ->findOrFail($id);
 
         $data['nav'] = 'pharma_payments';

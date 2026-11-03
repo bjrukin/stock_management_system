@@ -73,8 +73,8 @@ class PharmaReportController extends Controller
         $data['sub_nav'] = 'aging';
         $data['page_title'] = 'AR & AP Aging Summary';
 
-        $data['arAging'] = ReportingService::getCustomerAgingSummary();
-        $data['apAging'] = ReportingService::getSupplierAgingSummary();
+        $data['arAging'] = ReportingService::getArAgingSummary();
+        $data['apAging'] = ReportingService::getApAgingSummary();
 
         return view('admin.pharma.reports.aging', $data);
     }
