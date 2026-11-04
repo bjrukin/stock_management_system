@@ -52,11 +52,15 @@ class Admin extends Authenticatable {
 
         return $this->role->permissions()
             ->whereRelation('module', 'name', $moduleName)
-            ->whereJsonContains('name', $permissionName)
-            ->exists();
+            ->get()
+            ->contains(function ($permission) use ($permissionName) {
+                $actions = $permission->name;
+                // Older seeders encoded JSON before Eloquent applied its array cast.
+                if (is_string($actions)) {
+                    $actions = json_decode($actions, true);
+                }
 
-        // ->whereHas('module', function ($q) use ($moduleName) {
-        //     $q->where('name', $moduleName);
-        // })
+                return is_array($actions) && in_array($permissionName, $actions, true);
+            });
     }
 }

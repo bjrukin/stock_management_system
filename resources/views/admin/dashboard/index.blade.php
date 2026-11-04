@@ -58,7 +58,7 @@
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
                                 <span class="text-muted text-uppercase fw-semibold small">Cash & Bank Liquidity</span>
-                                <h3 class="my-1 text-info">NPR {{ number_format($summary['cash_bank_liquidity'], 2) }}</h3>
+                                <h3 class="my-1 text-info">{{ $summary['cash_bank_liquidity'] === null ? 'Restricted' : 'NPR ' . number_format($summary['cash_bank_liquidity'], 2) }}</h3>
                                 <small class="text-muted">Payables: NPR {{ number_format($summary['total_payables'], 2) }}</small>
                             </div>
                             <div class="bg-info bg-opacity-10 text-info p-3 rounded-circle">

@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Product extends Model
 {
-    use HasFactory, SoftDeletes, Auditable;
+    use Auditable, HasFactory, SoftDeletes;
 
     protected $fillable = [
         'code',
@@ -52,6 +52,21 @@ class Product extends Model
         'allow_fractional_base' => 'boolean',
         'is_active' => 'boolean',
     ];
+
+    public function hasTransactionHistory(): bool
+    {
+        if ($this->batches()->exists() || $this->inventoryBalances()->exists() || $this->stockMovements()->exists()) {
+            return true;
+        }
+        foreach ([PurchaseOrderLine::class, GoodsReceiptLine::class, PurchaseReturnLine::class,
+            SaleInvoiceLine::class, SaleReturnLine::class, StockTransferLine::class, StockAdjustmentLine::class] as $model) {
+            if ($model::where('product_id', $this->id)->exists()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public function scopeActive($query)
     {

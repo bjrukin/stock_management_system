@@ -33,7 +33,7 @@ Route::get('reset-password', [AuthController::class, 'resetPassword'])->name('ad
 Route::post('save-password', [AuthController::class, 'savePassword'])->name('admin.save.password');
 
 Route::group(['middleware' => 'auth.admin'], function () {
-    Route::get('/', [DashboardController::class, 'index'])->name('admin.dashboard');
+    Route::get('/', [DashboardController::class, 'index'])->middleware('pharma.access')->name('admin.dashboard');
     Route::prefix('account')->group(function () {
         Route::get('/', [AccountController::class, 'index'])->name('admin.account.setting');
         Route::post('/update-account', [AccountController::class, 'addAction'])->name('admin.account.update');
@@ -41,21 +41,21 @@ Route::group(['middleware' => 'auth.admin'], function () {
         Route::get('/logout', [AccountController::class, 'logout'])->name('admin.logout');
     });
 
-    Route::prefix('module')->group(function () {
+    Route::prefix('module')->middleware('auth.super-admin')->group(function () {
         Route::get('/', [ModuleController::class, 'list'])->name('admin.module');
         Route::get('/add.edit', [ModuleController::class, 'addEdit'])->name('admin.module.addEdit');
         Route::post('/store', [ModuleController::class, 'store'])->name('admin.module.store');
         Route::post('/delete', [ModuleController::class, 'delete'])->name('admin.module.delete');
     });
 
-    Route::prefix('role')->group(function () {
+    Route::prefix('role')->middleware('auth.super-admin')->group(function () {
         Route::get('/', [RoleController::class, 'list'])->name('admin.role');
         Route::get('/add.edit', [RoleController::class, 'addEdit'])->name('admin.role.addEdit');
         Route::post('/store', [RoleController::class, 'store'])->name('admin.role.store');
         Route::post('/delete', [RoleController::class, 'delete'])->name('admin.role.delete');
     });
 
-    Route::prefix('permission')->group(function () {
+    Route::prefix('permission')->middleware('auth.super-admin')->group(function () {
         Route::get('/', [PermissionController::class, 'list'])->name('admin.permission');
         Route::get('/add.edit', [PermissionController::class, 'addEdit'])->name('admin.permission.addEdit');
         Route::post('/store', [PermissionController::class, 'store'])->name('admin.permission.store');
@@ -70,7 +70,7 @@ Route::group(['middleware' => 'auth.admin'], function () {
         Route::post('/delete', [VerificationStepController::class, 'delete'])->name('admin.verificationstep.delete');
     });
 
-    Route::prefix('user')->group(function () {
+    Route::prefix('user')->middleware('auth.super-admin')->group(function () {
         Route::get('/', [UserController::class, 'list'])->name('admin.user');
         Route::post('/status', [UserController::class, 'status'])->name('admin.user.status');
         Route::get('/add.edit', [UserController::class, 'addEdit'])->name('admin.user.addEdit');
@@ -232,7 +232,7 @@ Route::group(['middleware' => 'auth.admin'], function () {
     | Pharmaceutical Wholesale / Distribution Stock Management Routes
     |--------------------------------------------------------------------------
     */
-    Route::prefix('pharma')->name('admin.pharma.')->group(function () {
+    Route::prefix('pharma')->name('admin.pharma.')->middleware('pharma.access')->group(function () {
         // Products & Batches
         Route::get('/products', [\App\Http\Controllers\Admin\Pharma\PharmaProductController::class, 'index'])->name('products');
         Route::get('/product/create', [\App\Http\Controllers\Admin\Pharma\PharmaProductController::class, 'create'])->name('product.create');
@@ -247,6 +247,9 @@ Route::group(['middleware' => 'auth.admin'], function () {
         Route::get('/purchase-order/create', [\App\Http\Controllers\Admin\Pharma\PharmaPurchasingController::class, 'createOrder'])->name('purchase-order.create');
         Route::post('/purchase-order/store', [\App\Http\Controllers\Admin\Pharma\PharmaPurchasingController::class, 'storeOrder'])->name('purchase-order.store');
         Route::get('/purchase-order/{id}', [\App\Http\Controllers\Admin\Pharma\PharmaPurchasingController::class, 'showOrder'])->name('purchase-order.show');
+        Route::get('/purchase-order/{id}/edit', [\App\Http\Controllers\Admin\Pharma\PharmaPurchasingController::class, 'editOrder'])->name('purchase-order.edit');
+        Route::post('/purchase-order/{id}/update', [\App\Http\Controllers\Admin\Pharma\PharmaPurchasingController::class, 'updateOrder'])->name('purchase-order.update');
+        Route::post('/purchase-order/{id}/delete', [\App\Http\Controllers\Admin\Pharma\PharmaPurchasingController::class, 'destroyOrder'])->name('purchase-order.delete');
         Route::post('/purchase-order/{id}/approve', [\App\Http\Controllers\Admin\Pharma\PharmaPurchasingController::class, 'approveOrder'])->name('purchase-order.approve');
 
         // Purchasing - Goods Receipts (GRN)
@@ -268,6 +271,9 @@ Route::group(['middleware' => 'auth.admin'], function () {
         Route::get('/sale-invoice/create', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'createInvoice'])->name('sale-invoice.create');
         Route::post('/sale-invoice/store', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'storeInvoice'])->name('sale-invoice.store');
         Route::get('/sale-invoice/{id}', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'showInvoice'])->name('sale-invoice.show');
+        Route::get('/sale-invoice/{id}/edit', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'editInvoice'])->name('sale-invoice.edit');
+        Route::post('/sale-invoice/{id}/update', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'updateInvoice'])->name('sale-invoice.update');
+        Route::post('/sale-invoice/{id}/delete', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'destroyInvoice'])->name('sale-invoice.delete');
         Route::post('/sale-invoice/{id}/post', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'postInvoice'])->name('sale-invoice.post');
         Route::get('/sale-invoice/{id}/print', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'printInvoice'])->name('sale-invoice.print');
 
@@ -276,6 +282,9 @@ Route::group(['middleware' => 'auth.admin'], function () {
         Route::get('/sales-return/create', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'createReturn'])->name('sales-return.create');
         Route::post('/sales-return/store', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'storeReturn'])->name('sales-return.store');
         Route::get('/sales-return/{id}', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'showReturn'])->name('sales-return.show');
+        Route::get('/sales-return/{id}/edit', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'editReturn'])->name('sales-return.edit');
+        Route::post('/sales-return/{id}/update', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'updateReturn'])->name('sales-return.update');
+        Route::post('/sales-return/{id}/delete', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'destroyReturn'])->name('sales-return.delete');
         Route::post('/sales-return/{id}/post', [\App\Http\Controllers\Admin\Pharma\PharmaSalesController::class, 'postReturn'])->name('sales-return.post');
 
         // Warehouse & Inventory

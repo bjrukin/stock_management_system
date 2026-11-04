@@ -3,7 +3,7 @@
 <div class="content">
     <div class="container-fluid">
         <div class="row mt-3 mb-2">
-            <div class="col-12 d-flex justify-content-between align-items-center">
+            <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <div>
                     <a href="{{ route('admin.pharma.sales-returns') }}" class="btn btn-sm btn-outline-secondary mb-1">
                         <i class="bi bi-arrow-left me-1"></i>Back to Sales Returns
@@ -12,8 +12,9 @@
                         <i class="bi bi-arrow-return-left me-2"></i>Sales Return #{{ $return->return_number }}
                     </h4>
                 </div>
-                <div>
-                    @if($return->status === 'draft')
+                <div class="d-flex flex-wrap gap-2">
+                    @include('admin.pharma.sales._draft_actions', ['document' => $return, 'prefix' => 'sales-return', 'module' => 'SaleReturn'])
+                    @if($return->status === 'draft' && auth()->guard('admin')->user()->hasPermission('SaleReturn', 'post'))
                     <form action="{{ route('admin.pharma.sales-return.post', $return->id) }}" method="POST" onsubmit="return confirm('Post this sales return? This will restock the inventory and apply the credit note to the customer ledger.');">
                         @csrf
                         <button type="submit" class="btn btn-success">
