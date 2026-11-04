@@ -4,7 +4,7 @@
     <div class="container-fluid">
         <!-- Header -->
         <div class="row mt-3 mb-3">
-            <div class="col-12 d-flex justify-content-between align-items-center">
+            <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <div>
                     <h4 class="page-title-main text-primary m-0">
                         <i class="bi bi-cart-check me-2"></i>Purchase Order #{{ $order->po_number }}
@@ -17,18 +17,19 @@
                         </ol>
                     </nav>
                 </div>
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <a href="{{ route('admin.pharma.purchase-orders') }}" class="btn btn-sm btn-outline-secondary">
                         <i class="bi bi-arrow-left me-1"></i>Back to List
                     </a>
-                    @if($order->status == 'draft')
+                    @include('admin.pharma.purchasing._order_actions', ['order' => $order])
+                    @if($order->status == 'draft' && auth()->guard('admin')->user()->hasPermission('PurchaseOrder', 'approve'))
                     <form action="{{ route('admin.pharma.purchase-order.approve', $order->id) }}" method="POST" onsubmit="return confirm('Approve this purchase order?')">
                         @csrf
                         <button type="submit" class="btn btn-sm btn-success">
                             <i class="bi bi-check-circle me-1"></i>Approve PO
                         </button>
                     </form>
-                    @elseif(in_array($order->status, ['approved', 'partially_received']))
+                    @elseif(in_array($order->status, ['approved', 'partially_received']) && auth()->guard('admin')->user()->hasPermission('GoodsReceipt', 'create'))
                     <a href="{{ route('admin.pharma.goods-receipt.create', ['po_id' => $order->id]) }}" class="btn btn-sm btn-primary">
                         <i class="bi bi-box-arrow-in-down me-1"></i>Receive Items (Create GRN)
                     </a>

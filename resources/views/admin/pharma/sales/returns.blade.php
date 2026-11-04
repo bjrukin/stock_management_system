@@ -3,11 +3,13 @@
 <div class="content">
     <div class="container-fluid">
         <div class="row mt-3 mb-2">
-            <div class="col-12 d-flex justify-content-between align-items-center">
+            <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <h4 class="page-title-main text-primary m-0"><i class="bi bi-arrow-return-left me-2"></i>Sales Returns (Customer Returns & Credit Notes)</h4>
-                <a href="{{ route('admin.pharma.sales-return.create') }}" class="btn btn-sm btn-primary">
+                @if(auth()->guard('admin')->user()->hasPermission('SaleReturn', 'create'))
+                    <a href="{{ route('admin.pharma.sales-return.create') }}" class="btn btn-sm btn-primary">
                     <i class="bi bi-plus-circle me-1"></i>Create Sales Return
                 </a>
+                    @endif
             </div>
         </div>
 
@@ -69,9 +71,12 @@
                                 </td>
                                 <td><small class="text-muted">{{ $ret->reason ?? '—' }}</small></td>
                                 <td class="text-end">
+                                    <div class="d-flex flex-wrap justify-content-end gap-2">
+                                    @include('admin.pharma.sales._draft_actions', ['document' => $ret, 'prefix' => 'sales-return', 'module' => 'SaleReturn'])
                                     <a href="{{ route('admin.pharma.sales-return.show', $ret->id) }}" class="btn btn-sm btn-outline-primary" title="View Details">
                                         <i class="bi bi-eye"></i> View
                                     </a>
+                                    </div>
                                 </td>
                             </tr>
                             @empty

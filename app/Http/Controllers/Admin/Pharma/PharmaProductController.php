@@ -7,9 +7,12 @@ use App\Models\Batch;
 use App\Models\Category;
 use App\Models\Manufacturer;
 use App\Models\Product;
+use App\Models\TaxCategory;
 use App\Models\Unit;
+use App\Support\PharmaAccess;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class PharmaProductController extends Controller
 {
@@ -19,14 +22,14 @@ class PharmaProductController extends Controller
         $data['sub_nav'] = 'products';
         $data['page_title'] = 'Products & Items';
 
-        $query = Product::with(['category', 'manufacturer', 'baseUnit', 'batches', 'inventoryBalances']);
+        $query = Product::with(['category', 'manufacturer', 'baseUnit', 'batches', 'inventoryBalances' => fn ($q) => PharmaAccess::scope($q)]);
 
         if ($request->filled('search')) {
             $s = $request->search;
             $query->where(function ($q) use ($s) {
                 $q->where('name', 'like', "%{$s}%")
-                  ->orWhere('code', 'like', "%{$s}%")
-                  ->orWhere('generic_name', 'like', "%{$s}%");
+                    ->orWhere('code', 'like', "%{$s}%")
+                    ->orWhere('generic_name', 'like', "%{$s}%");
             });
         }
 
@@ -51,7 +54,7 @@ class PharmaProductController extends Controller
         $data['categories'] = Category::all();
         $data['manufacturers'] = Manufacturer::all();
         $data['units'] = Unit::all();
-        $data['taxCategories'] = \App\Models\TaxCategory::all();
+        $data['taxCategories'] = TaxCategory::all();
 
         return view('admin.pharma.products.create', $data);
     }
@@ -82,7 +85,7 @@ class PharmaProductController extends Controller
         ]);
 
         if (empty($validated['code'])) {
-            $validated['code'] = 'PRD-' . strtoupper(substr(uniqid(), -6));
+            $validated['code'] = 'PRD-'.strtoupper(substr(uniqid(), -6));
         }
 
         $validated['mrp'] = $validated['mrp'] ?? 0.00;
@@ -112,7 +115,7 @@ class PharmaProductController extends Controller
         $data['categories'] = Category::all();
         $data['manufacturers'] = Manufacturer::all();
         $data['units'] = Unit::all();
-        $data['taxCategories'] = \App\Models\TaxCategory::all();
+        $data['taxCategories'] = TaxCategory::all();
 
         return view('admin.pharma.products.edit', $data);
     }
@@ -124,7 +127,7 @@ class PharmaProductController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'generic_name' => 'required|string|max:255',
-            'code' => 'required|string|max:50|unique:products,code,' . $product->id,
+            'code' => 'required|string|max:50|unique:products,code,'.$product->id,
             'brand' => 'nullable|string|max:100',
             'category_id' => 'required|exists:categories,id',
             'manufacturer_id' => 'nullable|exists:manufacturers,id',
@@ -153,6 +156,10 @@ class PharmaProductController extends Controller
         $validated['allow_fractional_base'] = $request->boolean('allow_fractional_base');
         $validated['is_active'] = $request->boolean('is_active');
 
+        if ((int) $validated['base_unit_id'] !== (int) $product->base_unit_id && $product->hasTransactionHistory()) {
+            return back()->withInput()->with('error', 'The base unit cannot be changed after stock or transaction history exists.');
+        }
+
         $product->update($validated);
 
         return redirect()->route('admin.pharma.products')
@@ -163,7 +170,18 @@ class PharmaProductController extends Controller
     {
         $product = Product::findOrFail($id);
         $name = $product->name;
-        $product->delete();
+        $deleted = DB::transaction(function () use ($product) {
+            $product = Product::whereKey($product->id)->lockForUpdate()->firstOrFail();
+            if ($product->hasTransactionHistory()) {
+                return false;
+            }
+            $product->delete();
+
+            return true;
+        });
+        if (! $deleted) {
+            return back()->with('error', 'This product has stock or transaction history. Use Edit to deactivate it instead.');
+        }
 
         return redirect()->route('admin.pharma.products')
             ->with('success', "Product '{$name}' deleted successfully.");
@@ -175,13 +193,13 @@ class PharmaProductController extends Controller
         $data['sub_nav'] = 'batches';
         $data['page_title'] = 'Batch Register';
 
-        $query = Batch::with(['product', 'inventoryBalances']);
+        $query = Batch::with(['product', 'inventoryBalances' => fn ($q) => PharmaAccess::scope($q)]);
 
         if ($request->filled('search')) {
             $s = $request->search;
             $query->where(function ($q) use ($s) {
                 $q->where('batch_number', 'like', "%{$s}%")
-                  ->orWhereRelation('product', 'name', 'like', "%{$s}%");
+                    ->orWhereRelation('product', 'name', 'like', "%{$s}%");
             });
         }
 
@@ -205,5 +223,3 @@ class PharmaProductController extends Controller
         return view('admin.pharma.products.batches', $data);
     }
 }
-
-

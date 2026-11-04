@@ -20,35 +20,36 @@ class ReportingService
     /**
      * Executive Overview KPIs & Dashboard metrics.
      */
-    public static function getDashboardSummary(?int $warehouseId = null): array
+    public static function getDashboardSummary(?int $warehouseId = null, ?array $warehouseIds = null): array
     {
         $today = Carbon::today()->format('Y-m-d');
 
         // 1. Stock Valuation
-        $stockVal = static::getStockValuationReport($warehouseId);
+        $stockVal = static::getStockValuationReport($warehouseId, $warehouseIds);
 
         // 2. Receivables & Payables
-        $totalReceivables = Customer::sum('current_balance');
-        $totalPayables = Supplier::sum('current_balance');
+        $totalReceivables = $warehouseIds === null ? Customer::sum('current_balance') : static::getArAgingSummary(null, $warehouseIds)['total'];
+        $totalPayables = $warehouseIds === null ? Supplier::sum('current_balance') : static::getApAgingSummary(null, $warehouseIds)['total'];
 
         // 3. Cash & Bank Balances
-        $cashBankTotal = CashBankAccount::where('is_active', true)->sum('current_balance');
+        $cashBankTotal = $warehouseIds === null ? CashBankAccount::where('is_active', true)->sum('current_balance') : null;
 
         // 4. Sales Today
         $salesToday = SaleInvoice::where('invoice_date_ad', $today)
+            ->when($warehouseIds !== null, fn ($q) => $q->whereIn('warehouse_id', $warehouseIds))
             ->where('status', '!=', 'cancelled')
             ->sum('total_amount');
 
         // 5. Expiry & Reorder alerts count
-        $nearExpiry = static::getNearExpiryBatches(90, $warehouseId);
-        $lowStock = static::getLowStockAlerts($warehouseId);
+        $nearExpiry = static::getNearExpiryBatches(90, $warehouseId, $warehouseIds);
+        $lowStock = static::getLowStockAlerts($warehouseId, $warehouseIds);
 
         return [
             'stock_valuation_cost' => $stockVal['total_cost_value'],
             'stock_valuation_mrp' => $stockVal['total_mrp_value'],
             'total_receivables' => number_format((float) $totalReceivables, 2, '.', ''),
             'total_payables' => number_format((float) $totalPayables, 2, '.', ''),
-            'cash_bank_liquidity' => number_format((float) $cashBankTotal, 2, '.', ''),
+            'cash_bank_liquidity' => $cashBankTotal === null ? null : number_format((float) $cashBankTotal, 2, '.', ''),
             'sales_today' => number_format((float) $salesToday, 2, '.', ''),
             'near_expiry_count' => count($nearExpiry),
             'low_stock_count' => count($lowStock),
@@ -59,7 +60,7 @@ class ReportingService
     /**
      * Near-Expiry Batches Report (< 90 days, < 60 days, < 30 days).
      */
-    public static function getNearExpiryBatches(int $days = 90, ?int $warehouseId = null): array
+    public static function getNearExpiryBatches(int $days = 90, ?int $warehouseId = null, ?array $warehouseIds = null): array
     {
         $today = Carbon::today();
         $cutoff = Carbon::today()->addDays($days);
@@ -72,6 +73,10 @@ class ReportingService
                     ->where('expiry_date_ad', '<=', $cutoff)
                     ->where('is_recalled', false);
             });
+
+        if ($warehouseIds !== null) {
+            $query->whereIn('warehouse_id', $warehouseIds);
+        }
 
         if ($warehouseId !== null) {
             $query->where('warehouse_id', $warehouseId);
@@ -118,13 +123,16 @@ class ReportingService
     /**
      * Low-Stock & Out-of-Stock Reorder Alerts.
      */
-    public static function getLowStockAlerts(?int $warehouseId = null): array
+    public static function getLowStockAlerts(?int $warehouseId = null, ?array $warehouseIds = null): array
     {
         $products = Product::where('is_active', true)->get();
         $alerts = [];
 
         foreach ($products as $prod) {
             $query = InventoryBalance::where('product_id', $prod->id);
+            if ($warehouseIds !== null) {
+                $query->whereIn('warehouse_id', $warehouseIds);
+            }
             if ($warehouseId !== null) {
                 $query->where('warehouse_id', $warehouseId);
             }
@@ -163,11 +171,15 @@ class ReportingService
     /**
      * Stock Valuation Report (FIFO / Landed cost basis vs MRP).
      */
-    public static function getStockValuationReport(?int $warehouseId = null): array
+    public static function getStockValuationReport(?int $warehouseId = null, ?array $warehouseIds = null): array
     {
         $query = InventoryBalance::query()
             ->with(['product', 'batch', 'warehouse', 'location'])
             ->where('quantity_on_hand', '>', 0);
+
+        if ($warehouseIds !== null) {
+            $query->whereIn('warehouse_id', $warehouseIds);
+        }
 
         if ($warehouseId !== null) {
             $query->where('warehouse_id', $warehouseId);
@@ -220,11 +232,15 @@ class ReportingService
     /**
      * Accounts Receivable (AR) Aging Summary.
      */
-    public static function getArAgingSummary(?int $customerId = null): array
+    public static function getArAgingSummary(?int $customerId = null, ?array $warehouseIds = null): array
     {
         $today = Carbon::today();
         $query = SaleInvoice::where('status', 'posted')
             ->where('credit_amount', '>', 0);
+
+        if ($warehouseIds !== null) {
+            $query->whereIn('warehouse_id', $warehouseIds);
+        }
 
         if ($customerId !== null) {
             $query->where('customer_id', $customerId);
@@ -281,10 +297,14 @@ class ReportingService
     /**
      * Accounts Payable (AP) Aging Summary.
      */
-    public static function getApAgingSummary(?int $supplierId = null): array
+    public static function getApAgingSummary(?int $supplierId = null, ?array $warehouseIds = null): array
     {
         $today = Carbon::today();
         $query = GoodsReceipt::where('status', 'posted');
+
+        if ($warehouseIds !== null) {
+            $query->whereIn('warehouse_id', $warehouseIds);
+        }
 
         if ($supplierId !== null) {
             $query->where('supplier_id', $supplierId);
@@ -469,11 +489,15 @@ class ReportingService
     /**
      * Sales Register (Compliant with Nepal Inland Revenue Department VAT rules).
      */
-    public static function getSalesRegister(?string $fromDateAd = null, ?string $toDateAd = null, ?int $fiscalYearId = null): array
+    public static function getSalesRegister(?string $fromDateAd = null, ?string $toDateAd = null, ?int $fiscalYearId = null, ?array $warehouseIds = null): array
     {
         $query = SaleInvoice::where('status', '!=', 'cancelled')
             ->orderBy('invoice_date_ad')
             ->orderBy('id');
+
+        if ($warehouseIds !== null) {
+            $query->whereIn('warehouse_id', $warehouseIds);
+        }
 
         if ($fromDateAd) {
             $query->where('invoice_date_ad', '>=', $fromDateAd);
@@ -530,12 +554,16 @@ class ReportingService
     /**
      * Purchase Register (Compliant with Nepal Inland Revenue Department VAT rules).
      */
-    public static function getPurchaseRegister(?string $fromDateAd = null, ?string $toDateAd = null, ?int $fiscalYearId = null): array
+    public static function getPurchaseRegister(?string $fromDateAd = null, ?string $toDateAd = null, ?int $fiscalYearId = null, ?array $warehouseIds = null): array
     {
         $query = GoodsReceipt::with('supplier')
             ->where('status', '!=', 'cancelled')
             ->orderBy('receipt_date_ad')
             ->orderBy('id');
+
+        if ($warehouseIds !== null) {
+            $query->whereIn('warehouse_id', $warehouseIds);
+        }
 
         if ($fromDateAd) {
             $query->where('receipt_date_ad', '>=', $fromDateAd);

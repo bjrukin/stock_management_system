@@ -15,7 +15,6 @@ use App\Models\Supplier;
 use App\Models\SupplierLedgerEntry;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
-use InvalidArgumentException;
 use RuntimeException;
 
 class PurchasingService
@@ -29,106 +28,152 @@ class PurchasingService
             $fiscalYear = isset($header['fiscal_year_id'])
                 ? FiscalYear::findOrFail($header['fiscal_year_id'])
                 : FiscalYear::current() ?? FiscalYear::orderByDesc('id')->firstOrFail();
-
-            $poNumber = DocumentSequenceService::getNextNumber('PO', $fiscalYear);
-
-            $orderDateAd = $header['order_date_ad'] ?? Carbon::today()->format('Y-m-d');
-            $orderDateBs = $header['order_date_bs'] ?? BsDateHelper::toBs($orderDateAd);
-
-            $po = PurchaseOrder::create([
-                'po_number' => $poNumber,
+            $po = new PurchaseOrder([
+                'po_number' => DocumentSequenceService::getNextNumber('PO', $fiscalYear),
                 'fiscal_year_id' => $fiscalYear->id,
-                'supplier_id' => $header['supplier_id'],
-                'warehouse_id' => $header['warehouse_id'],
-                'order_date_ad' => $orderDateAd,
-                'order_date_bs' => $orderDateBs,
-                'expected_delivery_date_ad' => $header['expected_delivery_date_ad'] ?? null,
-                'expected_delivery_date_bs' => $header['expected_delivery_date_bs'] ?? null,
                 'status' => 'draft',
-                'subtotal' => 0.00,
-                'discount_amount' => 0.00,
-                'taxable_amount' => 0.00,
-                'tax_amount' => 0.00,
-                'total_amount' => 0.00,
-                'notes' => $header['notes'] ?? null,
                 'created_by' => $header['created_by'] ?? null,
             ]);
 
-            $subtotal = '0.00';
-            $discountTotal = '0.00';
-            $taxableTotal = '0.00';
-            $taxTotal = '0.00';
-            $grandTotal = '0.00';
-
-            foreach ($lines as $lineData) {
-                $orderedQty = (string) $lineData['ordered_qty'];
-                $conversionFactor = (string) ($lineData['conversion_factor'] ?? 1.0);
-                $orderedBaseQty = (int) round(bcmul($orderedQty, $conversionFactor, 4));
-                $unitPrice = (string) $lineData['unit_price'];
-
-                $grossLine = bcmul($orderedQty, $unitPrice, 4);
-                $discountPct = (string) ($lineData['discount_pct'] ?? '0.0000');
-                $lineDiscount = bcdiv(bcmul($grossLine, $discountPct, 4), '100', 2);
-                $netLine = bcsub($grossLine, $lineDiscount, 2);
-
-                $taxRate = (string) ($lineData['tax_rate'] ?? '0.0000');
-                $lineTax = bcdiv(bcmul($netLine, $taxRate, 4), '100', 2);
-                $lineFinalTotal = bcadd($netLine, $lineTax, 2);
-
-                PurchaseOrderLine::create([
-                    'purchase_order_id' => $po->id,
-                    'product_id' => $lineData['product_id'],
-                    'unit_id' => $lineData['unit_id'],
-                    'ordered_qty' => $orderedQty,
-                    'conversion_factor' => $conversionFactor,
-                    'ordered_base_qty' => $orderedBaseQty,
-                    'received_base_qty' => 0,
-                    'unit_price' => $unitPrice,
-                    'discount_pct' => $discountPct,
-                    'discount_amount' => $lineDiscount,
-                    'tax_category_id' => $lineData['tax_category_id'] ?? null,
-                    'tax_rate' => $taxRate,
-                    'tax_amount' => $lineTax,
-                    'line_total' => $lineFinalTotal,
-                ]);
-
-                $subtotal = bcadd($subtotal, $grossLine, 2);
-                $discountTotal = bcadd($discountTotal, $lineDiscount, 2);
-                $taxableTotal = bcadd($taxableTotal, $netLine, 2);
-                $taxTotal = bcadd($taxTotal, $lineTax, 2);
-                $grandTotal = bcadd($grandTotal, $lineFinalTotal, 2);
-            }
-
-            $po->update([
-                'subtotal' => $subtotal,
-                'discount_amount' => $discountTotal,
-                'taxable_amount' => $taxableTotal,
-                'tax_amount' => $taxTotal,
-                'total_amount' => $grandTotal,
-            ]);
-
-            return $po->fresh('lines');
+            return static::writePurchaseOrder($po, $header, $lines);
         });
     }
 
-    /**
-     * Approve a Purchase Order.
-     */
-    public static function approvePurchaseOrder(PurchaseOrder $po, int $adminId): PurchaseOrder
+    public static function updatePurchaseOrder(PurchaseOrder $po, array $header, array $lines, int $adminId): PurchaseOrder
     {
-        if ($po->status !== 'draft') {
-            throw new RuntimeException("Purchase Order #{$po->po_number} cannot be approved from status '{$po->status}'.");
+        return DB::transaction(function () use ($po, $header, $lines, $adminId) {
+            $po = PurchaseOrder::whereKey($po->id)->lockForUpdate()->firstOrFail();
+            static::assertEditableOrder($po);
+            WarehouseOperationService::checkPeriodLock($po->order_date_ad->format('Y-m-d'));
+            WarehouseOperationService::checkPeriodLock($header['order_date_ad']);
+            $date = Carbon::parse($header['order_date_ad'])->startOfDay();
+            if ($date->lt($po->fiscalYear->start_date_ad) || $date->gt($po->fiscalYear->end_date_ad)) {
+                throw new RuntimeException('The order date must remain within the original fiscal year.');
+            }
+            $before = $po->load('lines')->toArray();
+            $po->lines()->delete();
+            $po = static::writePurchaseOrder($po, $header, $lines);
+            AuditService::log('purchase_order_edited', $po, $before, $po->toArray(), 'admin', $adminId);
+
+            return $po;
+        });
+    }
+
+    private static function writePurchaseOrder(PurchaseOrder $po, array $header, array $lines): PurchaseOrder
+    {
+        if (empty($lines)) {
+            throw new RuntimeException('A purchase order requires at least one item.');
+        }
+        $date = $header['order_date_ad'] ?? Carbon::today()->format('Y-m-d');
+        $expected = $header['expected_delivery_date_ad'] ?? null;
+        $po->fill([
+            'supplier_id' => $header['supplier_id'],
+            'warehouse_id' => $header['warehouse_id'],
+            'order_date_ad' => $date,
+            'order_date_bs' => $header['order_date_bs'] ?? BsDateHelper::toBs($date),
+            'expected_delivery_date_ad' => $expected,
+            'expected_delivery_date_bs' => $expected ? ($header['expected_delivery_date_bs'] ?? BsDateHelper::toBs($expected)) : null,
+            'notes' => $header['notes'] ?? null,
+        ])->save();
+
+        $subtotal = '0.00';
+        $discountTotal = '0.00';
+        $taxableTotal = '0.00';
+        $taxTotal = '0.00';
+        $grandTotal = '0.00';
+
+        foreach ($lines as $lineData) {
+            $orderedQty = (string) $lineData['ordered_qty'];
+            $conversionFactor = (string) ($lineData['conversion_factor'] ?? 1.0);
+            if (bccomp($conversionFactor, '0', 4) <= 0 || bccomp($orderedQty, '0', 4) <= 0) {
+                throw new RuntimeException('Quantity and conversion factor must be positive.');
+            }
+            $orderedBaseQty = (int) round(bcmul($orderedQty, $conversionFactor, 4));
+            if ($orderedBaseQty <= 0) {
+                throw new RuntimeException('Quantity must represent at least one base unit.');
+            }
+            $unitPrice = (string) $lineData['unit_price'];
+
+            $grossLine = bcmul($orderedQty, $unitPrice, 4);
+            $discountPct = (string) ($lineData['discount_pct'] ?? '0.0000');
+            $lineDiscount = bcdiv(bcmul($grossLine, $discountPct, 4), '100', 2);
+            $netLine = bcsub($grossLine, $lineDiscount, 2);
+
+            $taxRate = (string) ($lineData['tax_rate'] ?? '0.0000');
+            $lineTax = bcdiv(bcmul($netLine, $taxRate, 4), '100', 2);
+            $lineFinalTotal = bcadd($netLine, $lineTax, 2);
+
+            PurchaseOrderLine::create([
+                'purchase_order_id' => $po->id,
+                'product_id' => $lineData['product_id'],
+                'unit_id' => $lineData['unit_id'],
+                'ordered_qty' => $orderedQty,
+                'conversion_factor' => $conversionFactor,
+                'ordered_base_qty' => $orderedBaseQty,
+                'received_base_qty' => 0,
+                'unit_price' => $unitPrice,
+                'discount_pct' => $discountPct,
+                'discount_amount' => $lineDiscount,
+                'tax_category_id' => $lineData['tax_category_id'] ?? null,
+                'tax_rate' => $taxRate,
+                'tax_amount' => $lineTax,
+                'line_total' => $lineFinalTotal,
+            ]);
+
+            $subtotal = bcadd($subtotal, $grossLine, 2);
+            $discountTotal = bcadd($discountTotal, $lineDiscount, 2);
+            $taxableTotal = bcadd($taxableTotal, $netLine, 2);
+            $taxTotal = bcadd($taxTotal, $lineTax, 2);
+            $grandTotal = bcadd($grandTotal, $lineFinalTotal, 2);
         }
 
         $po->update([
-            'status' => 'approved',
-            'approved_by' => $adminId,
-            'approved_at' => now(),
+            'subtotal' => $subtotal,
+            'discount_amount' => $discountTotal,
+            'taxable_amount' => $taxableTotal,
+            'tax_amount' => $taxTotal,
+            'total_amount' => $grandTotal,
         ]);
 
-        AuditService::log('po_approved', $po, null, ['status' => 'approved'], 'admin', $adminId);
+        return $po->fresh('lines');
+    }
 
-        return $po;
+    public static function deletePurchaseOrder(PurchaseOrder $po, int $adminId): void
+    {
+        DB::transaction(function () use ($po, $adminId) {
+            $po = PurchaseOrder::whereKey($po->id)->lockForUpdate()->firstOrFail();
+            static::assertEditableOrder($po);
+            WarehouseOperationService::checkPeriodLock($po->order_date_ad->format('Y-m-d'));
+            $before = $po->load('lines')->toArray();
+            $po->delete();
+            AuditService::log('purchase_order_draft_deleted', $po, $before, null, 'admin', $adminId);
+        });
+    }
+
+    private static function assertEditableOrder(PurchaseOrder $po): void
+    {
+        if ($po->status !== 'draft') {
+            throw new RuntimeException('Only draft purchase orders can be edited or deleted.');
+        }
+        if ($po->goodsReceipts()->withTrashed()->exists()
+            || GoodsReceiptLine::whereIn('purchase_order_line_id', $po->lines()->select('id'))->exists()
+            || $po->lines()->where('received_base_qty', '>', 0)->exists()) {
+            throw new RuntimeException('This order has receipt history and cannot be edited or deleted.');
+        }
+    }
+
+    public static function approvePurchaseOrder(PurchaseOrder $po, int $adminId): PurchaseOrder
+    {
+        return DB::transaction(function () use ($po, $adminId) {
+            $po = PurchaseOrder::whereKey($po->id)->lockForUpdate()->firstOrFail();
+            if ($po->status !== 'draft') {
+                throw new RuntimeException("Purchase Order #{$po->po_number} cannot be approved from status '{$po->status}'.");
+            }
+            $po->update(['status' => 'approved', 'approved_by' => $adminId, 'approved_at' => now()]);
+            AuditService::log('po_approved', $po, null, ['status' => 'approved'], 'admin', $adminId);
+
+            return $po;
+        });
     }
 
     /**
@@ -322,22 +367,22 @@ class PurchasingService
 
                 // Sync latest pricing back to product master if provided
                 $productUpdates = [];
-                if (!empty($line->mrp) && $line->mrp > 0) {
+                if (! empty($line->mrp) && $line->mrp > 0) {
                     $productUpdates['mrp'] = $line->mrp;
                 }
-                if (!empty($line->unit_cost) && $line->unit_cost > 0) {
+                if (! empty($line->unit_cost) && $line->unit_cost > 0) {
                     $productUpdates['purchase_price'] = $line->unit_cost;
                 }
-                if (!empty($line->selling_price) && $line->selling_price > 0) {
+                if (! empty($line->selling_price) && $line->selling_price > 0) {
                     $productUpdates['selling_price'] = $line->selling_price;
                 }
-                if (!empty($line->wholesale_price) && $line->wholesale_price > 0) {
+                if (! empty($line->wholesale_price) && $line->wholesale_price > 0) {
                     $productUpdates['wholesale_price'] = $line->wholesale_price;
                 }
-                if (!empty($line->tax_category_id)) {
+                if (! empty($line->tax_category_id)) {
                     $productUpdates['tax_category_id'] = $line->tax_category_id;
                 }
-                if (!empty($productUpdates) && $line->product) {
+                if (! empty($productUpdates) && $line->product) {
                     $line->product->update($productUpdates);
                 }
 
