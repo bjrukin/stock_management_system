@@ -67,6 +67,8 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ]);
         $middleware->alias([
+            'auth.super-admin' => \App\Http\Middleware\SuperAdminAuthenticate::class,
+            'pharma.access' => \App\Http\Middleware\PharmaAuthorize::class,
             'auth.admin' => \App\Http\Middleware\AdminAuthenticate::class,
             'auth.professional' => \App\Http\Middleware\ProfessionalAuthenticate::class,
         ]);

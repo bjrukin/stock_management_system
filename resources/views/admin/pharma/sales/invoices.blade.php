@@ -3,15 +3,17 @@
 <div class="content">
     <div class="container-fluid">
         <div class="row mt-3 mb-2">
-            <div class="col-12 d-flex justify-content-between align-items-center">
+            <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <h4 class="page-title-main text-primary m-0"><i class="bi bi-receipt me-2"></i>Sales Invoices (Nepal VAT 13%)</h4>
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <a href="{{ route('admin.pharma.reports.sales-register') }}" class="btn btn-sm btn-outline-danger">
                         <i class="bi bi-file-earmark-spreadsheet me-1"></i>VAT Sales Register
                     </a>
+                    @if(auth()->guard('admin')->user()->hasPermission('SaleInvoice', 'create'))
                     <a href="{{ route('admin.pharma.sale-invoice.create') }}" class="btn btn-sm btn-primary">
                         <i class="bi bi-plus-circle me-1"></i>Create Sales Invoice
                     </a>
+                    @endif
                 </div>
             </div>
         </div>
@@ -90,7 +92,8 @@
                                     </span>
                                 </td>
                                 <td class="text-end">
-                                    <div class="btn-group btn-group-sm">
+                                    <div class="d-flex flex-wrap justify-content-end gap-2">
+                                        @include('admin.pharma.sales._draft_actions', ['document' => $inv, 'prefix' => 'sale-invoice', 'module' => 'SaleInvoice'])
                                         <a href="{{ route('admin.pharma.sale-invoice.show', $inv->id) }}" class="btn btn-outline-primary" title="View Details">
                                             <i class="bi bi-eye"></i>
                                         </a>

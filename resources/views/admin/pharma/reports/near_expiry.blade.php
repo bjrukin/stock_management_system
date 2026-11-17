@@ -41,7 +41,20 @@
                                 <td>{{ $b['expiry_date_bs'] }}</td>
                                 <td><span class="badge bg-danger fs-6">{{ $b['days_remaining'] }} days</span></td>
                                 <td class="fw-bold">{{ number_format($b['quantity_on_hand'], 0) }}</td>
-                                <td><span class="badge bg-dark">{{ strtoupper($b['status']) }}</span></td>
+                                                                @php
+                                    // Replicate the accessor logic for the array
+                                    $status = 'active';
+                                    if (!empty($b['is_recalled'])) {
+                                        $status = 'recalled';
+                                    } elseif (!empty($b['is_quarantined'])) {
+                                        $status = 'quarantined';
+                                    } elseif (!empty($b['is_expired'])) {
+                                        $status = 'expired';
+                                    }
+                                @endphp
+                                <td>
+                                    <span class="badge bg-dark">{{ strtoupper($status) }}</span>
+                                </td>
                             </tr>
                             @empty
                             <tr><td colspan="7" class="text-center text-muted py-4">No batches expiring within {{ $days }} days.</td></tr>

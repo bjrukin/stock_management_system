@@ -436,9 +436,13 @@ class InventoryService
         ?int $warehouseId = null,
         ?int $productId = null,
         ?string $fromDate = null,
-        ?string $toDate = null
+        ?string $toDate = null,
+        ?array $warehouseIds = null
     ): array {
         $baseQuery = StockMovement::query();
+        if ($warehouseIds !== null) {
+            $baseQuery->whereIn('warehouse_id', $warehouseIds);
+        }
 
         if ($warehouseId !== null) {
             $baseQuery->where('warehouse_id', $warehouseId);

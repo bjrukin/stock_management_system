@@ -3,11 +3,13 @@
 <div class="content">
     <div class="container-fluid">
         <div class="row mt-3 mb-2">
-            <div class="col-12 d-flex justify-content-between align-items-center">
+            <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <h4 class="page-title-main text-primary m-0"><i class="bi bi-capsule me-2"></i>Product Catalog & Inventory</h4>
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <a href="{{ route('admin.pharma.batches') }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-upc-scan me-1"></i>View Batch Register</a>
-                    <a href="{{ route('admin.pharma.product.create') }}" class="btn btn-sm btn-primary"><i class="bi bi-plus-circle me-1"></i>Add New Product</a>
+                    @if(auth()->guard('admin')->user()->hasPermission('Product', 'create'))
+                                        <a href="{{ route('admin.pharma.product.create') }}" class="btn btn-sm btn-primary"><i class="bi bi-plus-circle me-1"></i>Add New Product</a>
+                                        @endif
                 </div>
             </div>
         </div>
@@ -100,16 +102,20 @@
                                     @endif
                                 </td>
                                 <td class="text-end">
-                                    <div class="btn-group btn-group-sm">
+                                    <div class="d-flex flex-wrap justify-content-end gap-2">
+                                        @if(auth()->guard('admin')->user()->hasPermission('Product', 'edit'))
                                         <a href="{{ route('admin.pharma.product.edit', $prod->id) }}" class="btn btn-outline-primary" title="Edit">
-                                            <i class="bi bi-pencil"></i>
+                                            <i class="bi bi-pencil me-1" aria-hidden="true"></i>Edit
                                         </a>
+                                        @endif
+                                        @if(auth()->guard('admin')->user()->hasPermission('Product', 'delete'))
                                         <form action="{{ route('admin.pharma.product.delete', $prod->id) }}" method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this product?');">
                                             @csrf
                                             <button type="submit" class="btn btn-outline-danger" title="Delete">
-                                                <i class="bi bi-trash"></i>
+                                                <i class="bi bi-trash me-1" aria-hidden="true"></i>Delete
                                             </button>
                                         </form>
+                                        @endif
                                     </div>
                                 </td>
                             </tr>

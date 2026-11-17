@@ -3,12 +3,12 @@
 <div class="content">
     <div class="container-fluid">
         <div class="row mt-3 mb-2">
-            <div class="col-12 d-flex justify-content-between align-items-center">
+            <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <div>
                     <h4 class="page-title-main text-primary m-0"><i class="bi bi-cart-check me-2"></i>Purchase Orders</h4>
                     <p class="text-muted small mb-0">Procurement & supplier order management</p>
                 </div>
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <a href="{{ route('admin.pharma.purchase-order.create') }}" class="btn btn-sm btn-primary">
                         <i class="bi bi-plus-circle me-1"></i>Create Purchase Order
                     </a>
@@ -68,18 +68,19 @@
                                 </td>
                                 <td><span class="badge bg-light text-dark border">{{ $po->lines->count() }} line(s)</span></td>
                                 <td class="text-end">
-                                    <div class="btn-group btn-group-sm">
+                                    <div class="d-flex flex-wrap justify-content-end gap-2">
                                         <a href="{{ route('admin.pharma.purchase-order.show', $po->id) }}" class="btn btn-outline-secondary" title="View PO Details">
                                             <i class="bi bi-eye"></i>
                                         </a>
-                                        @if($po->status == 'draft')
+                                    @include('admin.pharma.purchasing._order_actions', ['order' => $po])
+                        @if($po->status == 'draft' && auth()->guard('admin')->user()->hasPermission('PurchaseOrder', 'approve'))
                                         <form action="{{ route('admin.pharma.purchase-order.approve', $po->id) }}" method="POST" class="d-inline" onsubmit="return confirm('Approve Purchase Order #{{ $po->po_number }}?')">
                                             @csrf
                                             <button type="submit" class="btn btn-outline-success" title="Approve PO">
                                                 <i class="bi bi-check-lg"></i>
                                             </button>
                                         </form>
-                                        @elseif(in_array($po->status, ['approved', 'partially_received']))
+                                        @elseif(in_array($po->status, ['approved', 'partially_received']) && auth()->guard('admin')->user()->hasPermission('GoodsReceipt', 'create'))
                                         <a href="{{ route('admin.pharma.goods-receipt.create', ['po_id' => $po->id]) }}" class="btn btn-outline-primary" title="Create GRN from this PO">
                                             <i class="bi bi-box-arrow-in-down"></i>
                                         </a>

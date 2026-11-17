@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin\Pharma;
 
 use App\Http\Controllers\Controller;
+use App\Support\PharmaAccess;
 use App\Models\CashBankAccount;
 use App\Models\CustomerReceipt;
 use App\Models\SupplierPayment;
@@ -16,7 +17,7 @@ class PharmaPaymentController extends Controller
         $data['sub_nav'] = 'customer_receipts';
         $data['page_title'] = 'Customer Receipts (AR Collection)';
 
-        $data['receipts'] = CustomerReceipt::with(['customer', 'cashBankAccount', 'allocations.saleInvoice'])
+        $data['receipts'] = PharmaAccess::payments(CustomerReceipt::query(), 'invoice')->with(['customer', 'account', 'allocations.invoice'])
             ->orderBy('id', 'desc')->paginate(20);
 
         return view('admin.pharma.payments.customer_receipts', $data);
@@ -30,7 +31,7 @@ class PharmaPaymentController extends Controller
 
         $data['customers'] = \App\Models\Customer::active()->get();
         $data['accounts'] = CashBankAccount::active()->get();
-        $data['invoices'] = \App\Models\SaleInvoice::where('status', 'posted')
+        $data['invoices'] = PharmaAccess::scope(\App\Models\SaleInvoice::query())->where('status', 'posted')
             ->where('credit_amount', '>', 0)
             ->get();
 
@@ -39,6 +40,9 @@ class PharmaPaymentController extends Controller
 
     public function storeReceipt(Request $request)
     {
+        $adminId = auth()->guard('admin')->id();
+        abort_if($adminId === null, 401, 'Please log in as an admin.');
+
         $validated = $request->validate([
             'customer_id' => 'required|exists:customers,id',
             'cash_bank_account_id' => 'required|exists:cash_bank_accounts,id',
@@ -64,7 +68,7 @@ class PharmaPaymentController extends Controller
             'bank_name' => $validated['bank_name'] ?? null,
             'transaction_reference' => $validated['transaction_reference'] ?? null,
             'notes' => $validated['notes'] ?? null,
-            'created_by' => auth()->id() ?? 1,
+            'created_by' => $adminId,
         ];
 
         $allocations = $validated['allocations'] ?? [];
@@ -81,7 +85,7 @@ class PharmaPaymentController extends Controller
 
     public function showReceipt(int $id)
     {
-        $receipt = CustomerReceipt::with(['customer', 'cashBankAccount', 'allocations.saleInvoice'])
+        $receipt = PharmaAccess::payments(CustomerReceipt::query(), 'invoice')->with(['customer', 'account', 'allocations.invoice'])
             ->findOrFail($id);
 
         $data['nav'] = 'pharma_payments';
@@ -94,10 +98,13 @@ class PharmaPaymentController extends Controller
 
     public function postReceipt(Request $request, int $id)
     {
+        $adminId = auth()->guard('admin')->id();
+        abort_if($adminId === null, 401, 'Please log in as an admin.');
+
         $receipt = CustomerReceipt::findOrFail($id);
 
         try {
-            \App\Services\PaymentService::postCustomerReceipt($receipt, auth()->id() ?? 1);
+            \App\Services\PaymentService::postCustomerReceipt($receipt, $adminId);
 
             return redirect()->route('admin.pharma.customer-receipt.show', $receipt->id)
                 ->with('success', "Customer Receipt #{$receipt->receipt_number} posted successfully. Accounts Receivable credited and Cash/Bank updated.");
@@ -112,7 +119,7 @@ class PharmaPaymentController extends Controller
         $data['sub_nav'] = 'supplier_payments';
         $data['page_title'] = 'Supplier Payments (AP Disbursement)';
 
-        $data['payments'] = SupplierPayment::with(['supplier', 'cashBankAccount', 'allocations.goodsReceipt'])
+        $data['payments'] = PharmaAccess::payments(SupplierPayment::query(), 'goodsReceipt')->with(['supplier', 'account', 'allocations.goodsReceipt'])
             ->orderBy('id', 'desc')->paginate(20);
 
         return view('admin.pharma.payments.supplier_payments', $data);
@@ -126,13 +133,16 @@ class PharmaPaymentController extends Controller
 
         $data['suppliers'] = \App\Models\Supplier::active()->get();
         $data['accounts'] = CashBankAccount::active()->get();
-        $data['receipts'] = \App\Models\GoodsReceipt::where('status', 'posted')->take(50)->get();
+        $data['receipts'] = PharmaAccess::scope(\App\Models\GoodsReceipt::query())->where('status', 'posted')->take(50)->get();
 
         return view('admin.pharma.payments.payment_create', $data);
     }
 
     public function storePayment(Request $request)
     {
+        $adminId = auth()->guard('admin')->id();
+        abort_if($adminId === null, 401, 'Please log in as an admin.');
+
         $validated = $request->validate([
             'supplier_id' => 'required|exists:suppliers,id',
             'cash_bank_account_id' => 'required|exists:cash_bank_accounts,id',
@@ -158,7 +168,7 @@ class PharmaPaymentController extends Controller
             'bank_name' => $validated['bank_name'] ?? null,
             'transaction_reference' => $validated['transaction_reference'] ?? null,
             'notes' => $validated['notes'] ?? null,
-            'created_by' => auth()->id() ?? 1,
+            'created_by' => $adminId,
         ];
 
         $allocations = $validated['allocations'] ?? [];
@@ -175,7 +185,7 @@ class PharmaPaymentController extends Controller
 
     public function showPayment(int $id)
     {
-        $payment = SupplierPayment::with(['supplier', 'cashBankAccount', 'allocations.goodsReceipt'])
+        $payment = PharmaAccess::payments(SupplierPayment::query(), 'goodsReceipt')->with(['supplier', 'account', 'allocations.goodsReceipt'])
             ->findOrFail($id);
 
         $data['nav'] = 'pharma_payments';
@@ -188,10 +198,13 @@ class PharmaPaymentController extends Controller
 
     public function postPayment(Request $request, int $id)
     {
+        $adminId = auth()->guard('admin')->id();
+        abort_if($adminId === null, 401, 'Please log in as an admin.');
+
         $payment = SupplierPayment::findOrFail($id);
 
         try {
-            \App\Services\PaymentService::postSupplierPayment($payment, auth()->id() ?? 1);
+            \App\Services\PaymentService::postSupplierPayment($payment, $adminId);
 
             return redirect()->route('admin.pharma.supplier-payment.show', $payment->id)
                 ->with('success', "Supplier Payment #{$payment->payment_number} posted successfully. Accounts Payable debited and Cash/Bank credited.");

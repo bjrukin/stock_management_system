@@ -3,7 +3,7 @@
 <div class="content">
     <div class="container-fluid">
         <div class="row mt-3 mb-2">
-            <div class="col-12 d-flex justify-content-between align-items-center">
+            <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <div>
                     <a href="{{ route('admin.pharma.sales-invoices') }}" class="btn btn-sm btn-outline-secondary mb-1">
                         <i class="bi bi-arrow-left me-1"></i>Back to Invoices
@@ -12,11 +12,12 @@
                         <i class="bi bi-receipt me-2"></i>Sales Invoice #{{ $invoice->invoice_number }}
                     </h4>
                 </div>
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <a href="{{ route('admin.pharma.sale-invoice.print', $invoice->id) }}" target="_blank" class="btn btn-outline-dark">
                         <i class="bi bi-printer me-1"></i>Print PDF Tax Invoice
                     </a>
-                    @if($invoice->status === 'draft')
+                    @include('admin.pharma.sales._draft_actions', ['document' => $invoice, 'prefix' => 'sale-invoice', 'module' => 'SaleInvoice'])
+                    @if($invoice->status === 'draft' && auth()->guard('admin')->user()->hasPermission('SaleInvoice', 'post'))
                     <form action="{{ route('admin.pharma.sale-invoice.post', $invoice->id) }}" method="POST" onsubmit="return confirm('Post this invoice? This will immediately deduct stock and update customer ledger.');">
                         @csrf
                         <button type="submit" class="btn btn-success">

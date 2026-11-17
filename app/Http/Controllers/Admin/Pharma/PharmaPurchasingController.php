@@ -14,9 +14,12 @@ use App\Models\Unit;
 use App\Models\Warehouse;
 use App\Models\WarehouseLocation;
 use App\Services\PurchasingService;
+use App\Support\PharmaAccess;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
 use Throwable;
 
 class PharmaPurchasingController extends Controller
@@ -33,7 +36,7 @@ class PharmaPurchasingController extends Controller
         $data['sub_nav'] = 'purchase_orders';
         $data['page_title'] = 'Purchase Orders';
 
-        $query = PurchaseOrder::with(['supplier', 'warehouse', 'lines.product']);
+        $query = PharmaAccess::scope(PurchaseOrder::query())->with(['supplier', 'warehouse', 'lines.product']);
 
         if ($request->filled('supplier_id')) {
             $query->where('supplier_id', $request->supplier_id);
@@ -51,30 +54,75 @@ class PharmaPurchasingController extends Controller
 
     public function createOrder(Request $request)
     {
+        return $this->orderForm();
+    }
+
+    public function editOrder(int $id)
+    {
+        $order = PharmaAccess::scope(PurchaseOrder::query())->with('lines')->findOrFail($id);
+        abort_unless($order->status === 'draft', 409, 'Only draft purchase orders can be edited.');
+
+        return $this->orderForm($order);
+    }
+
+    private function orderForm(?PurchaseOrder $order = null)
+    {
         $data['nav'] = 'pharma_purchasing';
         $data['sub_nav'] = 'purchase_orders';
-        $data['page_title'] = 'Create Purchase Order';
+        $data['page_title'] = $order ? 'Edit Purchase Order' : 'Create Purchase Order';
 
-        $data['suppliers'] = Supplier::where('is_active', true)->orderBy('name')->get();
-        $data['warehouses'] = Warehouse::where('is_active', true)->orderBy('name')->get();
+        $data['suppliers'] = Supplier::where(fn ($q) => $q->where('is_active', true)->orWhere('id', $order?->supplier_id))->orderBy('name')->get();
+        $data['warehouses'] = PharmaAccess::scope(Warehouse::query(), ['id'])->where(fn ($q) => $q->where('is_active', true)->orWhere('id', $order?->warehouse_id))->orderBy('name')->get();
         $data['products'] = Product::with(['baseUnit', 'packagingLevels.unit', 'taxCategory'])
-            ->where('is_active', true)
+            ->where(fn ($q) => $q->where('is_active', true)->orWhereIn('id', $order?->lines->pluck('product_id') ?? []))
             ->orderBy('name')
             ->get();
         $data['units'] = Unit::orderBy('name')->get();
         $data['taxCategories'] = TaxCategory::where('is_active', true)->get();
         $data['defaultDate'] = Carbon::today()->format('Y-m-d');
 
+        $data['order'] = $order;
+        $data['initialLines'] = $order ? $order->lines->map(fn ($line) => $line->only(['product_id', 'unit_id', 'ordered_qty', 'conversion_factor', 'unit_price', 'discount_pct', 'tax_category_id', 'tax_rate']))->all() : [];
+
         return view('admin.pharma.purchasing.order_create', $data);
     }
 
     public function storeOrder(Request $request)
+    {
+        return $this->saveOrder($request);
+    }
+
+    public function updateOrder(Request $request, int $id)
+    {
+        $order = PharmaAccess::scope(PurchaseOrder::query())->findOrFail($id);
+
+        return $this->saveOrder($request, $order);
+    }
+
+    public function destroyOrder(int $id)
+    {
+        $order = PharmaAccess::scope(PurchaseOrder::query())->findOrFail($id);
+        try {
+            PurchasingService::deletePurchaseOrder($order, Auth::guard('admin')->id());
+
+            return redirect()->route('admin.pharma.purchase-orders')->with('success', 'Draft purchase order deleted.');
+        } catch (RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+    }
+
+    private function saveOrder(Request $request, ?PurchaseOrder $order = null)
     {
         $request->validate([
             'supplier_id' => 'required|exists:suppliers,id',
             'warehouse_id' => 'required|exists:warehouses,id',
             'order_date_ad' => 'required|date',
             'expected_delivery_date_ad' => 'nullable|date',
+            'notes' => 'nullable|string',
+            'lines.*.conversion_factor' => 'nullable|numeric|gt:0',
+            'lines.*.discount_pct' => 'nullable|numeric|min:0|max:100',
+            'lines.*.tax_rate' => 'nullable|numeric|min:0|max:100',
+            'lines.*.tax_category_id' => 'nullable|exists:tax_categories,id',
             'lines' => 'required|array|min:1',
             'lines.*.product_id' => 'required|exists:products,id',
             'lines.*.unit_id' => 'required|exists:units,id',
@@ -115,18 +163,26 @@ class PharmaPurchasingController extends Controller
                 return back()->withInput()->with('error', 'Please provide at least one valid item line.');
             }
 
-            $po = PurchasingService::createPurchaseOrder($header, $lines);
+            $po = DB::transaction(function () use ($order, $header, $lines, $adminId, $request) {
+                $po = $order
+                    ? PurchasingService::updatePurchaseOrder($order, $header, $lines, $adminId)
+                    : PurchasingService::createPurchaseOrder($header, $lines);
+                if ($request->input('action') === 'save_and_approve') {
+                    $po = PurchasingService::approvePurchaseOrder($po, $adminId);
+                }
+
+                return $po;
+            });
 
             if ($request->input('action') === 'save_and_approve') {
-                PurchasingService::approvePurchaseOrder($po, $adminId);
                 return redirect()->route('admin.pharma.purchase-orders')
-                    ->with('success', "Purchase Order #{$po->po_number} created and approved successfully.");
+                    ->with('success', "Purchase Order #{$po->po_number} saved and approved successfully.");
             }
 
             return redirect()->route('admin.pharma.purchase-order.show', $po->id)
-                ->with('success', "Purchase Order #{$po->po_number} created as draft.");
+                ->with('success', "Purchase Order #{$po->po_number} saved as draft.");
         } catch (Throwable $e) {
-            return back()->withInput()->with('error', 'Error creating Purchase Order: ' . $e->getMessage());
+            return back()->withInput()->with('error', 'Error saving Purchase Order: '.$e->getMessage());
         }
     }
 
@@ -136,7 +192,7 @@ class PharmaPurchasingController extends Controller
         $data['sub_nav'] = 'purchase_orders';
         $data['page_title'] = 'Purchase Order Details';
 
-        $data['order'] = PurchaseOrder::with(['supplier', 'warehouse', 'lines.product.baseUnit', 'lines.unit', 'lines.taxCategory'])
+        $data['order'] = PharmaAccess::scope(PurchaseOrder::query())->with(['supplier', 'warehouse', 'lines.product.baseUnit', 'lines.unit', 'lines.taxCategory'])
             ->findOrFail($id);
 
         return view('admin.pharma.purchasing.order_show', $data);
@@ -145,13 +201,13 @@ class PharmaPurchasingController extends Controller
     public function approveOrder(int $id)
     {
         try {
-            $po = PurchaseOrder::findOrFail($id);
+            $po = PharmaAccess::scope(PurchaseOrder::query())->findOrFail($id);
             PurchasingService::approvePurchaseOrder($po, Auth::guard('admin')->id());
 
             return redirect()->route('admin.pharma.purchase-orders')
                 ->with('success', "Purchase Order #{$po->po_number} has been approved successfully.");
         } catch (Throwable $e) {
-            return back()->with('error', 'Error approving Purchase Order: ' . $e->getMessage());
+            return back()->with('error', 'Error approving Purchase Order: '.$e->getMessage());
         }
     }
 
@@ -167,7 +223,7 @@ class PharmaPurchasingController extends Controller
         $data['sub_nav'] = 'goods_receipts';
         $data['page_title'] = 'Goods Receipts (GRN)';
 
-        $query = GoodsReceipt::with(['supplier', 'warehouse', 'purchaseOrder', 'lines.product', 'lines.batch']);
+        $query = PharmaAccess::scope(GoodsReceipt::query())->with(['supplier', 'warehouse', 'purchaseOrder', 'lines.product', 'lines.batch']);
 
         if ($request->filled('status')) {
             $query->where('status', $request->status);
@@ -185,15 +241,15 @@ class PharmaPurchasingController extends Controller
         $data['page_title'] = 'Add Goods Receipt (GRN)';
 
         $data['suppliers'] = Supplier::where('is_active', true)->orderBy('name')->get();
-        $data['warehouses'] = Warehouse::where('is_active', true)->orderBy('name')->get();
-        $data['locations'] = WarehouseLocation::where('is_available', true)->orderBy('code')->get();
+        $data['warehouses'] = PharmaAccess::scope(Warehouse::query(), ['id'])->where('is_active', true)->orderBy('name')->get();
+        $data['locations'] = PharmaAccess::scope(WarehouseLocation::query())->where('is_available', true)->orderBy('code')->get();
         $data['products'] = Product::with(['baseUnit', 'packagingLevels.unit', 'taxCategory'])
             ->where('is_active', true)
             ->orderBy('name')
             ->get();
         $data['units'] = Unit::orderBy('name')->get();
         $data['taxCategories'] = TaxCategory::where('is_active', true)->get();
-        $data['approvedOrders'] = PurchaseOrder::whereIn('status', ['approved', 'partially_received'])
+        $data['approvedOrders'] = PharmaAccess::scope(PurchaseOrder::query())->whereIn('status', ['approved', 'partially_received'])
             ->with(['supplier', 'warehouse', 'lines.product', 'lines.unit'])
             ->orderByDesc('id')
             ->get();
@@ -202,7 +258,7 @@ class PharmaPurchasingController extends Controller
         // Optional prefill from PO
         $data['selectedPo'] = null;
         if ($request->filled('po_id')) {
-            $data['selectedPo'] = PurchaseOrder::with(['lines.product.baseUnit', 'lines.unit'])
+            $data['selectedPo'] = PharmaAccess::scope(PurchaseOrder::query())->with(['lines.product.baseUnit', 'lines.unit'])
                 ->where('id', $request->po_id)
                 ->first();
         }
@@ -285,6 +341,7 @@ class PharmaPurchasingController extends Controller
 
             if ($request->input('action') === 'save_and_post') {
                 PurchasingService::postGoodsReceipt($grn, $adminId);
+
                 return redirect()->route('admin.pharma.goods-receipts')
                     ->with('success', "Goods Receipt #{$grn->grn_number} posted! Inventory increased and batches activated.");
             }
@@ -292,7 +349,7 @@ class PharmaPurchasingController extends Controller
             return redirect()->route('admin.pharma.goods-receipt.show', $grn->id)
                 ->with('success', "Goods Receipt #{$grn->grn_number} created as draft.");
         } catch (Throwable $e) {
-            return back()->withInput()->with('error', 'Error recording Goods Receipt: ' . $e->getMessage());
+            return back()->withInput()->with('error', 'Error recording Goods Receipt: '.$e->getMessage());
         }
     }
 
@@ -302,14 +359,14 @@ class PharmaPurchasingController extends Controller
         $data['sub_nav'] = 'goods_receipts';
         $data['page_title'] = 'Goods Receipt Details';
 
-        $data['receipt'] = GoodsReceipt::with([
+        $data['receipt'] = PharmaAccess::scope(GoodsReceipt::query())->with([
             'supplier',
             'warehouse',
             'purchaseOrder',
             'lines.product.baseUnit',
             'lines.unit',
             'lines.location',
-            'lines.batch'
+            'lines.batch',
         ])->findOrFail($id);
 
         return view('admin.pharma.purchasing.receipt_show', $data);
@@ -318,13 +375,13 @@ class PharmaPurchasingController extends Controller
     public function postReceipt(int $id)
     {
         try {
-            $grn = GoodsReceipt::findOrFail($id);
+            $grn = PharmaAccess::scope(GoodsReceipt::query())->findOrFail($id);
             PurchasingService::postGoodsReceipt($grn, Auth::guard('admin')->id());
 
             return redirect()->route('admin.pharma.goods-receipts')
                 ->with('success', "Goods Receipt #{$grn->grn_number} successfully posted to inventory & supplier ledger.");
         } catch (Throwable $e) {
-            return back()->with('error', 'Error posting Goods Receipt: ' . $e->getMessage());
+            return back()->with('error', 'Error posting Goods Receipt: '.$e->getMessage());
         }
     }
 
@@ -340,7 +397,7 @@ class PharmaPurchasingController extends Controller
         $data['sub_nav'] = 'purchase_returns';
         $data['page_title'] = 'Purchase Returns';
 
-        $query = PurchaseReturn::with(['supplier', 'warehouse', 'goodsReceipt', 'lines.product', 'lines.batch']);
+        $query = PharmaAccess::scope(PurchaseReturn::query())->with(['supplier', 'warehouse', 'goodsReceipt', 'lines.product', 'lines.batch']);
 
         $data['returns'] = $query->orderBy('id', 'desc')->paginate(20);
 
@@ -354,11 +411,11 @@ class PharmaPurchasingController extends Controller
         $data['page_title'] = 'Create Purchase Return';
 
         $data['suppliers'] = Supplier::where('is_active', true)->orderBy('name')->get();
-        $data['warehouses'] = Warehouse::where('is_active', true)->orderBy('name')->get();
-        $data['locations'] = WarehouseLocation::where('is_available', true)->orderBy('code')->get();
+        $data['warehouses'] = PharmaAccess::scope(Warehouse::query(), ['id'])->where('is_active', true)->orderBy('name')->get();
+        $data['locations'] = PharmaAccess::scope(WarehouseLocation::query())->where('is_available', true)->orderBy('code')->get();
         $data['products'] = Product::with(['baseUnit', 'batches'])->where('is_active', true)->orderBy('name')->get();
         $data['units'] = Unit::orderBy('name')->get();
-        $data['postedReceipts'] = GoodsReceipt::where('status', 'posted')
+        $data['postedReceipts'] = PharmaAccess::scope(GoodsReceipt::query())->where('status', 'posted')
             ->with(['supplier', 'warehouse', 'lines.product', 'lines.batch', 'lines.unit'])
             ->orderByDesc('id')
             ->get();
@@ -368,7 +425,7 @@ class PharmaPurchasingController extends Controller
         // Optional prefill from GRN
         $data['selectedGrn'] = null;
         if ($request->filled('grn_id')) {
-            $data['selectedGrn'] = GoodsReceipt::with(['lines.product', 'lines.batch', 'lines.unit', 'lines.location'])
+            $data['selectedGrn'] = PharmaAccess::scope(GoodsReceipt::query())->with(['lines.product', 'lines.batch', 'lines.unit', 'lines.location'])
                 ->where('id', $request->grn_id)
                 ->first();
         }
@@ -429,6 +486,7 @@ class PharmaPurchasingController extends Controller
 
             if ($request->input('action') === 'save_and_post') {
                 PurchasingService::postPurchaseReturn($prtn, $adminId);
+
                 return redirect()->route('admin.pharma.purchase-returns')
                     ->with('success', "Purchase Return #{$prtn->return_number} posted! Stock deducted and debit note recorded.");
             }
@@ -436,7 +494,7 @@ class PharmaPurchasingController extends Controller
             return redirect()->route('admin.pharma.purchase-return.show', $prtn->id)
                 ->with('success', "Purchase Return #{$prtn->return_number} created as draft.");
         } catch (Throwable $e) {
-            return back()->withInput()->with('error', 'Error creating Purchase Return: ' . $e->getMessage());
+            return back()->withInput()->with('error', 'Error creating Purchase Return: '.$e->getMessage());
         }
     }
 
@@ -446,14 +504,14 @@ class PharmaPurchasingController extends Controller
         $data['sub_nav'] = 'purchase_returns';
         $data['page_title'] = 'Purchase Return Details';
 
-        $data['return'] = PurchaseReturn::with([
+        $data['return'] = PharmaAccess::scope(PurchaseReturn::query())->with([
             'supplier',
             'warehouse',
             'goodsReceipt',
             'lines.product.baseUnit',
             'lines.unit',
             'lines.batch',
-            'lines.location'
+            'lines.location',
         ])->findOrFail($id);
 
         return view('admin.pharma.purchasing.return_show', $data);
@@ -462,13 +520,13 @@ class PharmaPurchasingController extends Controller
     public function postReturn(int $id)
     {
         try {
-            $prtn = PurchaseReturn::findOrFail($id);
+            $prtn = PharmaAccess::scope(PurchaseReturn::query())->findOrFail($id);
             PurchasingService::postPurchaseReturn($prtn, Auth::guard('admin')->id());
 
             return redirect()->route('admin.pharma.purchase-returns')
                 ->with('success', "Purchase Return #{$prtn->return_number} posted successfully.");
         } catch (Throwable $e) {
-            return back()->with('error', 'Error posting Purchase Return: ' . $e->getMessage());
+            return back()->with('error', 'Error posting Purchase Return: '.$e->getMessage());
         }
     }
 }

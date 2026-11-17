@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin\Pharma;
 
 use App\Http\Controllers\Controller;
+use App\Support\PharmaAccess;
 use App\Models\Customer;
 use App\Models\Supplier;
 use App\Models\Warehouse;
@@ -16,7 +17,7 @@ class PharmaMasterController extends Controller
         $data['sub_nav'] = 'warehouses';
         $data['page_title'] = 'Warehouses';
 
-        $query = Warehouse::withCount('locations');
+        $query = PharmaAccess::scope(Warehouse::query(), ['id'])->withCount('locations');
 
         if ($request->filled('search')) {
             $s = $request->search;
@@ -47,7 +48,7 @@ class PharmaMasterController extends Controller
         $validated['is_active'] = $request->has('is_active') ? $request->boolean('is_active') : true;
 
         if ($validated['is_primary']) {
-            Warehouse::where('is_primary', true)->update(['is_primary' => false]);
+            PharmaAccess::scope(Warehouse::query(), ['id'])->where('is_primary', true)->update(['is_primary' => false]);
         }
 
         $warehouse = Warehouse::create($validated);
@@ -58,7 +59,7 @@ class PharmaMasterController extends Controller
 
     public function updateWarehouse(Request $request, int $id)
     {
-        $warehouse = Warehouse::findOrFail($id);
+        $warehouse = PharmaAccess::scope(Warehouse::query(), ['id'])->findOrFail($id);
 
         $validated = $request->validate([
             'name' => 'required|string|max:255',
@@ -72,7 +73,7 @@ class PharmaMasterController extends Controller
         $validated['is_active'] = $request->boolean('is_active');
 
         if ($validated['is_primary']) {
-            Warehouse::where('id', '!=', $warehouse->id)->where('is_primary', true)->update(['is_primary' => false]);
+            PharmaAccess::scope(Warehouse::query(), ['id'])->where('id', '!=', $warehouse->id)->where('is_primary', true)->update(['is_primary' => false]);
         }
 
         $warehouse->update($validated);
@@ -83,7 +84,7 @@ class PharmaMasterController extends Controller
 
     public function destroyWarehouse(int $id)
     {
-        $warehouse = Warehouse::findOrFail($id);
+        $warehouse = PharmaAccess::scope(Warehouse::query(), ['id'])->findOrFail($id);
         $name = $warehouse->name;
         $warehouse->delete();
 
@@ -93,15 +94,15 @@ class PharmaMasterController extends Controller
 
     public function warehouseLocations(Request $request, int $id)
     {
-        $warehouse = Warehouse::withCount('locations')->findOrFail($id);
+        $warehouse = PharmaAccess::scope(Warehouse::query(), ['id'])->withCount('locations')->findOrFail($id);
 
         $data['nav'] = 'pharma_catalog';
         $data['sub_nav'] = 'warehouses';
         $data['page_title'] = "Locations - {$warehouse->name}";
         $data['warehouse'] = $warehouse;
-        $data['warehouses'] = Warehouse::where('is_active', true)->orderBy('name')->get();
+        $data['warehouses'] = PharmaAccess::scope(Warehouse::query(), ['id'])->where('is_active', true)->orderBy('name')->get();
 
-        $query = \App\Models\WarehouseLocation::with('warehouse')->where('warehouse_id', $warehouse->id);
+        $query = PharmaAccess::scope(\App\Models\WarehouseLocation::query())->with('warehouse')->where('warehouse_id', $warehouse->id);
 
         if ($request->filled('search')) {
             $s = $request->search;
@@ -127,13 +128,13 @@ class PharmaMasterController extends Controller
         $data['sub_nav'] = 'warehouses';
         $data['page_title'] = 'All Warehouse Locations';
         $data['warehouse'] = null;
-        $data['warehouses'] = Warehouse::where('is_active', true)->orderBy('name')->get();
+        $data['warehouses'] = PharmaAccess::scope(Warehouse::query(), ['id'])->where('is_active', true)->orderBy('name')->get();
 
-        $query = \App\Models\WarehouseLocation::with('warehouse');
+        $query = PharmaAccess::scope(\App\Models\WarehouseLocation::query())->with('warehouse');
 
         if ($request->filled('warehouse_id')) {
             $query->where('warehouse_id', $request->warehouse_id);
-            $data['warehouse'] = Warehouse::find($request->warehouse_id);
+            $data['warehouse'] = PharmaAccess::scope(Warehouse::query(), ['id'])->find($request->warehouse_id);
         }
 
         if ($request->filled('search')) {
@@ -165,7 +166,7 @@ class PharmaMasterController extends Controller
             'capacity' => 'nullable|numeric|min:0',
         ]);
 
-        $exists = \App\Models\WarehouseLocation::where('warehouse_id', $validated['warehouse_id'])
+        $exists = PharmaAccess::scope(\App\Models\WarehouseLocation::query())->where('warehouse_id', $validated['warehouse_id'])
             ->where('code', $validated['code'])
             ->exists();
         if ($exists) {
@@ -192,7 +193,7 @@ class PharmaMasterController extends Controller
 
     public function updateLocation(Request $request, int $id)
     {
-        $location = \App\Models\WarehouseLocation::findOrFail($id);
+        $location = PharmaAccess::scope(\App\Models\WarehouseLocation::query())->findOrFail($id);
 
         $validated = $request->validate([
             'warehouse_id' => 'required|exists:warehouses,id',
@@ -203,7 +204,7 @@ class PharmaMasterController extends Controller
             'capacity' => 'nullable|numeric|min:0',
         ]);
 
-        $exists = \App\Models\WarehouseLocation::where('warehouse_id', $validated['warehouse_id'])
+        $exists = PharmaAccess::scope(\App\Models\WarehouseLocation::query())->where('warehouse_id', $validated['warehouse_id'])
             ->where('code', $validated['code'])
             ->where('id', '!=', $location->id)
             ->exists();
@@ -226,7 +227,7 @@ class PharmaMasterController extends Controller
 
     public function destroyLocation(int $id)
     {
-        $location = \App\Models\WarehouseLocation::findOrFail($id);
+        $location = PharmaAccess::scope(\App\Models\WarehouseLocation::query())->findOrFail($id);
         $name = $location->name;
         $location->delete();
 
